@@ -50,11 +50,11 @@ if (!isset($_SESSION['admin_id'])) {
                     </div>
                 </div>
                 <div class="col-md-4">
-                     <div class="card text-center mb-3">
+                    <div class="card text-center mb-3">
                         <div class="card-body">
-                            <h5 class="card-title">Manage Companies</h5>
-                            <p class="card-text">View, edit, and delete company records.</p>
-                            <a href="manage_companies.php" class="btn btn-primary">Go to Company Management</a>
+                            <h5 class="card-title">Manage Jobs</h5>
+                            <p class="card-text">Add new job postings from companies.</p>
+                            <a href="manage_jobs.php" class="btn btn-primary">Go to Job Management</a>
                         </div>
                     </div>
                 </div>

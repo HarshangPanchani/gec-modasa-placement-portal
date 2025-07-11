@@ -230,7 +230,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <label for="branch" class="form-label">Branch *</label>
                                 <select class="form-select" id="branch" name="branch" required>
                                     <option selected disabled value="">Choose...</option>
-                                    <option>Computer Engineering</option><option>Information Technology</option><option>Mechanical Engineering</option><option>Civil Engineering</option><option>Electrical Engineering</option><option>Electronics & Communication</option>
+                                    <option>Computer Engineering</option><option>Information Technology</option><option>Mechanical Engineering</option><option>Civil Engineering</option><option>Electrical Engineering</option><option>Electronics & Communication Engineering</option><option>Automobile Engineering</option>
                                 </select>
                             </div>
                             <div class="col-md-4 mb-3">

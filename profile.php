@@ -265,6 +265,7 @@ $action = $_GET['action'] ?? 'display';
                         <!-- ================== DETAILED DISPLAY MODE ================== -->
                         <!-- This is the display part you liked, no changes here -->
                         <div class="text-end mb-3">
+                            <a href="jobs.php" class="btn btn-success">Active Jobs</a>
                             <a href="profile.php?action=edit" class="btn btn-primary">Edit Profile</a>
                         </div>
                         <div class="row">

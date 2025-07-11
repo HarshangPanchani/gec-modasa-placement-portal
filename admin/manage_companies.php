@@ -47,7 +47,12 @@ $conn->close();
 
     <div class="card shadow-sm">
         <div class="card-body">
-            <h5 class="card-title">Registered Company List</h5>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3>Registered Company List</h3>
+                <div>
+                    <a href="add_company.php" class="btn btn-success">Add Job Company</a>
+                </div>
+            </div>
             <div class="table-responsive">
                 <table id="companies-table" class="table table-striped table-bordered" style="width:100%">
                     <thead>
