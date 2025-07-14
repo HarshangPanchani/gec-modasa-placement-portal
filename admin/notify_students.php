@@ -56,7 +56,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['job_id']) && !empty($_
 
     $passout_year_placeholders = implode(',', array_fill(0, count($passout_years), '?'));
     
-    $sql_students = "SELECT email, name FROM students WHERE passout_year IN ($passout_year_placeholders) AND (" . implode(' OR ', $branch_conditions) . ")";
+    $sql_students = "SELECT email, name FROM students WHERE status='Active' AND passout_year IN ($passout_year_placeholders) AND (" . implode(' OR ', $branch_conditions) . ")";
     
     $stmt_students = $conn->prepare($sql_students);
     $stmt_students->bind_param(str_repeat('s', count($passout_years)), ...$passout_years);

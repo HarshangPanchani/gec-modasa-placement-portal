@@ -13,6 +13,7 @@ if (!isset($_GET['job_id'])) { header("Location: manage_jobs.php"); exit(); }
 $job_id = (int)$_GET['job_id'];
 
 // --- HANDLE THE UPDATE FORM SUBMISSION FROM THE MODAL ---
+// REPLACE THE EXISTING if-block (starting around line 10) WITH THIS
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_application'])) {
     $application_id = (int)$_POST['application_id'];
     $was_present = !empty($_POST['was_present']) ? $_POST['was_present'] : null;
@@ -22,19 +23,57 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_application']))
     $is_selected = !empty($_POST['is_selected']) ? $_POST['is_selected'] : null;
     $ctc = !empty($_POST['ctc']) ? (float)$_POST['ctc'] : null;
 
-    $stmt_update = $conn->prepare(
-        "UPDATE job_applications 
-         SET was_present=?, round1_status=?, round2_status=?, round3_status=?, is_selected=?, CTC=? 
-         WHERE id=?"
-    );
-    $stmt_update->bind_param("sssssdi", $was_present, $round1_status, $round2_status, $round3_status, $is_selected, $ctc, $application_id);
-    
-    if ($stmt_update->execute()) {
+    $conn->begin_transaction();
+    try {
+        // First, update the specific application record as before
+        $stmt_update = $conn->prepare("UPDATE job_applications SET was_present=?, round1_status=?, round2_status=?, round3_status=?, is_selected=?, CTC=? WHERE id=?");
+        $stmt_update->bind_param("sssssdi", $was_present, $round1_status, $round2_status, $round3_status, $is_selected, $ctc, $application_id);
+        $stmt_update->execute();
+        $stmt_update->close();
+        
         $_SESSION['message'] = ['text' => 'Applicant status updated successfully!', 'type' => 'success'];
-    } else {
-        $_SESSION['message'] = ['text' => 'Error updating status: ' . $stmt_update->error, 'type' => 'danger'];
+
+        // Get the student_id for our new automatic status checks
+        $stmt_get_sid = $conn->prepare("SELECT student_id FROM job_applications WHERE id = ?");
+        $stmt_get_sid->bind_param("i", $application_id);
+        $stmt_get_sid->execute();
+        $student_id_to_check = $stmt_get_sid->get_result()->fetch_assoc()['student_id'];
+        $stmt_get_sid->close();
+
+        if ($student_id_to_check) {
+            // NEW LOGIC: Check for automatic status changes
+            // 1. If student is marked as "Selected", set their status to 'Placed'
+            if ($is_selected === 'Yes') {
+                $stmt_place = $conn->prepare("UPDATE students SET status = 'Placed' WHERE id = ?");
+                $stmt_place->bind_param("i", $student_id_to_check);
+                $stmt_place->execute();
+                $stmt_place->close();
+                $_SESSION['message']['text'] .= " <strong>This student's status is now 'Placed'.</strong>";
+            }
+            // 2. Otherwise, if student is marked as "Absent"...
+            else if ($was_present === 'No') {
+                // ...count their total absences
+                $stmt_count_absent = $conn->prepare("SELECT COUNT(*) as absence_count FROM job_applications WHERE student_id = ? AND was_present = 'No'");
+                $stmt_count_absent->bind_param("i", $student_id_to_check);
+                $stmt_count_absent->execute();
+                $absence_count = $stmt_count_absent->get_result()->fetch_assoc()['absence_count'];
+                $stmt_count_absent->close();
+
+                // And if the count is 3 or more, debar them for absence
+                if ($absence_count >= 3) {
+                    $stmt_debar = $conn->prepare("UPDATE students SET status = 'Debarred (Absence)' WHERE id = ?");
+                    $stmt_debar->bind_param("i", $student_id_to_check);
+                    $stmt_debar->execute();
+                    $stmt_debar->close();
+                    $_SESSION['message']['text'] .= " <strong>This student has been debarred due to 3 or more absences.</strong>";
+                }
+            }
+        }
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        $_SESSION['message'] = ['text' => 'An error occurred during the update: ' . $e->getMessage(), 'type' => 'danger'];
     }
-    $stmt_update->close();
     
     header("Location: view_job_applicants.php?job_id=" . $job_id);
     exit();

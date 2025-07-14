@@ -17,7 +17,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     function handleUpload($file_input_name, $upload_subdir, $allowed_types, $enrollment_no, $file_purpose,$branch,$passout_year) {
         if (isset($_FILES[$file_input_name]) && $_FILES[$file_input_name]['error'] == 0) {
             $uploadDir = 'uploads/';
-            $targetDir = $uploadDir . $upload_subdir . '/'. $branch . '/' . $passout_year . '/' ; 
+            $targetDir = $uploadDir . $upload_subdir . '/' . $passout_year . '/' . $branch . '/'; 
             if (!is_dir($targetDir)) {
                 // The `true` parameter creates nested directories if needed. 0755 are standard permissions.
                 mkdir($targetDir, 0755, true);
