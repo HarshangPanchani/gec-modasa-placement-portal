@@ -299,10 +299,42 @@ $action = $_GET['action'] ?? 'display';
                                 <hr class="my-3">
                                 <h5 class="mb-3">Professional Links & Documents</h5>
                                 <div class="row">
-                                     <div class="col-12 mb-2"><span class="data-label">Resume:</span> <?php if (!empty($student['resume_path']) && file_exists($student['resume_path'])): ?><a href="<?php echo htmlspecialchars($student['resume_path']); ?>" target="_blank">View/Download Resume</a><?php else: echo '<span class="data-value">Not Uploaded</span>'; endif; ?></div>
-                                     <div class="col-12 mb-2"><span class="data-label">LinkedIn:</span> <?php if (!empty($student['linkedin_url'])): ?><a href="<?php echo htmlspecialchars($student['linkedin_url']); ?>" target="_blank"><?php echo htmlspecialchars($student['linkedin_url']); ?></a><?php else: echo '<span class="data-value">N/A</span>'; endif; ?></div>
-                                     <div class="col-12 mb-2"><span class="data-label">GitHub:</span> <?php if (!empty($student['github_url'])): ?><a href="<?php echo htmlspecialchars($student['github_url']); ?>" target="_blank"><?php echo htmlspecialchars($student['github_url']); ?></a><?php else: echo '<span class="data-value">N/A</span>'; endif; ?></div>
-                                     <div class="col-12 mb-2"><span class="data-label">Portfolio:</span> <?php if (!empty($student['portfolio_url'])): ?><a href="<?php echo htmlspecialchars($student['portfolio_url']); ?>" target="_blank"><?php echo htmlspecialchars($student['portfolio_url']); ?></a><?php else: echo '<span class="data-value">N/A</span>'; endif; ?></div>
+                            
+
+                                     <?php if (!empty($student['resume_path']) && file_exists($student['resume_path'])): ?>
+                                         <div class="col-12 mb-2">
+                                            <span class="data-label">Resume:</span>
+                                                <a href="<?php echo htmlspecialchars($student['resume_path']); ?>" target="_blank">View/Download Resume</a>
+                                         </div>
+                                     <?php endif; ?>
+
+                                    <?php if (!empty($student['linkedin_url'])): ?>
+                                         <div class="col-12 mb-2">
+                                              <span class="data-label">LinkedIn:</span>
+                                                <a href="<?php echo htmlspecialchars($student['linkedin_url']); ?>" target="_blank">
+                                     <?php echo htmlspecialchars($student['linkedin_url']); ?>
+                                                </a>
+                                          </div>
+                                           <?php endif; ?>
+
+                                    <?php if (!empty($student['github_url'])): ?>
+                                         <div class="col-12 mb-2">
+                                            <span class="data-label">GitHub:</span>
+                                               <a href="<?php echo htmlspecialchars($student['github_url']); ?>" target="_blank">
+                                     <?php echo htmlspecialchars($student['github_url']); ?>
+                                               </a>
+                                            </div>
+                                     <?php endif; ?>
+
+                                     <?php if (!empty($student['portfolio_url'])): ?>
+                                          <div class="col-12 mb-2">
+                                            <span class="data-label">Portfolio:</span>
+                                                  <a href="<?php echo htmlspecialchars($student['portfolio_url']); ?>" target="_blank">
+                                        <?php echo htmlspecialchars($student['portfolio_url']); ?>
+                                             </a>
+                                              </div>
+                                         <?php endif; ?>
+                                         </div>
                                 </div>
                             </div>
                         </div>

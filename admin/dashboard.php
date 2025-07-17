@@ -58,6 +58,16 @@ if (!isset($_SESSION['admin_id'])) {
                         </div>
                     </div>
                 </div>
+                <div class="col-md-4">
+                    <div class="card text-center mb-3">
+                        <div class="card-body">
+                            <h5 class="card-title">Generate Reports</h5>
+                            <p class="card-text">Create custom Excel reports for placed and unplaced students.</p>
+                            <a href="reports.php" class="btn btn-info">Go to Reporting Engine</a>
+                        </div>
+                    </div>
+                </div>
+
                 <?php if ($_SESSION['admin_role'] === 'super_admin'): ?>
                 <div class="col-md-4">
                     <div class="card text-center mb-3">
@@ -69,6 +79,7 @@ if (!isset($_SESSION['admin_id'])) {
                     </div>
                 </div>
                 <?php endif; ?>
+
             </div>
         </div>
     </div>
