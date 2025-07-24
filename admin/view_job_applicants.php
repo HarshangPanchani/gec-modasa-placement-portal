@@ -6,14 +6,124 @@ require '../vendor/autoload.php'; // Include Composer's autoloader for PhpSpread
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
-// Auth check & ID validation
-if (!isset($_SESSION['admin_id'])) { header("Location: login.php"); exit(); }
-if (!isset($_GET['job_id'])) { header("Location: manage_jobs.php"); exit(); }
+// --- Authentication & Job ID Validation ---
+if (!isset($_SESSION['admin_id'])) {
+    header("Location: login.php");
+    exit();
+}
+if (!isset($_GET['job_id'])) {
+    header("Location: manage_jobs.php");
+    exit();
+}
 $job_id = (int)$_GET['job_id'];
 
-// --- HANDLE THE UPDATE FORM SUBMISSION FROM THE MODAL ---
-// REPLACE THE EXISTING if-block (starting around line 10) WITH THIS
+// --- [NEW] HANDLE EXCEL IMPORT FORM SUBMISSION ---
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['import_excel'])) {
+    if (isset($_FILES['applicant_sheet']) && $_FILES['applicant_sheet']['error'] == UPLOAD_ERR_OK) {
+        $file_tmp_path = $_FILES['applicant_sheet']['tmp_name'];
+        $file_name = $_FILES['applicant_sheet']['name'];
+        $file_extension = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+
+        if ($file_extension === 'xlsx') {
+            $conn->begin_transaction();
+            try {
+                $spreadsheet = IOFactory::load($file_tmp_path);
+                $sheet = $spreadsheet->getActiveSheet();
+                $highestRow = $sheet->getHighestRow();
+                $updated_count = 0;
+                $skipped_count = 0;
+                $error_list = [];
+
+                // Loop through each row of the spreadsheet (starting from row 2 to skip headers)
+                for ($row = 2; $row <= $highestRow; $row++) {
+                    // --- Column Mapping ---
+                    // B: Enrollment, F: Present, G: R1, H: R2, I: R3, J: Selected, K: CTC
+                    $enrollment_no = trim($sheet->getCell('B' . $row)->getValue());
+                    
+                    if (empty($enrollment_no)) {
+                        $skipped_count++;
+                        continue; // Skip rows without an enrollment number
+                    }
+
+                    // Normalize input data
+                    $was_present = trim($sheet->getCell('F' . $row)->getValue()) ?: null;
+                    $round1_status = trim($sheet->getCell('G' . $row)->getValue()) ?: null;
+                    $round2_status = trim($sheet->getCell('H' . $row)->getValue()) ?: null;
+                    $round3_status = trim($sheet->getCell('I' . $row)->getValue()) ?: null;
+                    $is_selected = trim($sheet->getCell('J' . $row)->getValue()) ?: null;
+                    $ctc = trim($sheet->getCell('K' . $row)->getValue());
+                    $ctc = is_numeric($ctc) ? (float)$ctc : null;
+
+                    // Find the student and application ID using enrollment_no and job_id
+                    $stmt_find = $conn->prepare("SELECT ja.id as application_id, s.id as student_id FROM job_applications ja JOIN students s ON ja.student_id = s.id WHERE ja.job_id = ? AND s.enrollment_no = ?");
+                    $stmt_find->bind_param("is", $job_id, $enrollment_no);
+                    $stmt_find->execute();
+                    $result = $stmt_find->get_result();
+                    
+                    if ($result->num_rows > 0) {
+                        $data = $result->fetch_assoc();
+                        $application_id = $data['application_id'];
+                        $student_id_to_check = $data['student_id'];
+                        $stmt_find->close();
+
+                        // 1. Update the job_applications table
+                        $stmt_update = $conn->prepare("UPDATE job_applications SET was_present=?, round1_status=?, round2_status=?, round3_status=?, is_selected=?, CTC=? WHERE id=?");
+                        $stmt_update->bind_param("sssssdi", $was_present, $round1_status, $round2_status, $round3_status, $is_selected, $ctc, $application_id);
+                        $stmt_update->execute();
+                        $stmt_update->close();
+
+                        // 2. Perform automatic student status updates (Placed/Debarred)
+                        if ($is_selected === 'Yes') {
+                            $stmt_place = $conn->prepare("UPDATE students SET status = 'Placed' WHERE id = ?");
+                            $stmt_place->bind_param("i", $student_id_to_check);
+                            $stmt_place->execute();
+                            $stmt_place->close();
+                        } else if ($was_present === 'No') {
+                            $stmt_count_absent = $conn->prepare("SELECT COUNT(*) as absence_count FROM job_applications WHERE student_id = ? AND was_present = 'No'");
+                            $stmt_count_absent->bind_param("i", $student_id_to_check);
+                            $stmt_count_absent->execute();
+                            $absence_count = $stmt_count_absent->get_result()->fetch_assoc()['absence_count'];
+                            $stmt_count_absent->close();
+
+                            if ($absence_count >= 3) {
+                                $stmt_debar = $conn->prepare("UPDATE students SET status = 'Debarred (Absence)' WHERE id = ? AND status != 'Placed'");
+                                $stmt_debar->bind_param("i", $student_id_to_check);
+                                $stmt_debar->execute();
+                                $stmt_debar->close();
+                            }
+                        }
+                        $updated_count++;
+                    } else {
+                        $stmt_find->close();
+                        $skipped_count++;
+                        $error_list[] = htmlspecialchars($enrollment_no);
+                    }
+                } // End of row loop
+
+                $conn->commit();
+                $message_text = "<strong>Import Successful!</strong><br> - {$updated_count} records updated.<br> - {$skipped_count} records skipped.";
+                if (!empty($error_list)) {
+                    $message_text .= "<br> - Could not find applicants with enrollment numbers: " . implode(', ', $error_list);
+                }
+                $_SESSION['message'] = ['text' => $message_text, 'type' => 'success'];
+
+            } catch (Exception $e) {
+                $conn->rollback();
+                $_SESSION['message'] = ['text' => 'An error occurred during import: ' . $e->getMessage(), 'type' => 'danger'];
+            }
+        } else {
+            $_SESSION['message'] = ['text' => 'Invalid file type. Please upload a .xlsx Excel file.', 'type' => 'danger'];
+        }
+    } else {
+        $_SESSION['message'] = ['text' => 'File upload failed. Please try again.', 'type' => 'danger'];
+    }
+    header("Location: view_job_applicants.php?job_id=" . $job_id);
+    exit();
+}
+
+// --- HANDLE SINGLE UPDATE FORM SUBMISSION (FROM MODAL) ---
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_application'])) {
     $application_id = (int)$_POST['application_id'];
     $was_present = !empty($_POST['was_present']) ? $_POST['was_present'] : null;
@@ -41,8 +151,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_application']))
         $stmt_get_sid->close();
 
         if ($student_id_to_check) {
-            // NEW LOGIC: Check for automatic status changes
-            // 1. If student is marked as "Selected", set their status to 'Placed'
+            // Check for automatic status changes
             if ($is_selected === 'Yes') {
                 $stmt_place = $conn->prepare("UPDATE students SET status = 'Placed' WHERE id = ?");
                 $stmt_place->bind_param("i", $student_id_to_check);
@@ -50,18 +159,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_application']))
                 $stmt_place->close();
                 $_SESSION['message']['text'] .= " <strong>This student's status is now 'Placed'.</strong>";
             }
-            // 2. Otherwise, if student is marked as "Absent"...
             else if ($was_present === 'No') {
-                // ...count their total absences
+                // Count their total absences
                 $stmt_count_absent = $conn->prepare("SELECT COUNT(*) as absence_count FROM job_applications WHERE student_id = ? AND was_present = 'No'");
                 $stmt_count_absent->bind_param("i", $student_id_to_check);
                 $stmt_count_absent->execute();
                 $absence_count = $stmt_count_absent->get_result()->fetch_assoc()['absence_count'];
                 $stmt_count_absent->close();
 
-                // And if the count is 3 or more, debar them for absence
+                // And if the count is 3 or more, debar them (unless already Placed)
                 if ($absence_count >= 3) {
-                    $stmt_debar = $conn->prepare("UPDATE students SET status = 'Debarred (Absence)' WHERE id = ?");
+                    $stmt_debar = $conn->prepare("UPDATE students SET status = 'Debarred (Absence)' WHERE id = ? AND status != 'Placed'");
                     $stmt_debar->bind_param("i", $student_id_to_check);
                     $stmt_debar->execute();
                     $stmt_debar->close();
@@ -79,7 +187,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_application']))
     exit();
 }
 
-// --- Fetch Job and Applicant Data (This block is now safe from the POST request) ---
+// --- HANDLE EXCEL EXPORT REQUEST ---
+if (isset($_GET['export']) && $_GET['export'] == 'excel') {
+    // This requires fetching data, so we'll do it after the DB connection is confirmed available.
+    // The actual export logic is placed after the data fetch section below.
+    // This is just a flag to trigger it.
+    $do_export = true;
+} else {
+    $do_export = false;
+}
+
+// --- Fetch Job and Applicant Data (safe from POST redirects) ---
 $stmt_job = $conn->prepare("SELECT company_name FROM jobs WHERE id = ?");
 $stmt_job->bind_param("i", $job_id);
 $stmt_job->execute();
@@ -97,7 +215,7 @@ $sql_applicants = "
     FROM job_applications ja
     JOIN students s ON ja.student_id = s.id
     WHERE ja.job_id = ?
-    ORDER BY s.enrollment_no ASC"; // <-- CHANGE MADE HERE
+    ORDER BY s.enrollment_no ASC";
 $stmt_applicants = $conn->prepare($sql_applicants);
 $stmt_applicants->bind_param("i", $job_id);
 $stmt_applicants->execute();
@@ -105,8 +223,8 @@ $applicants = $stmt_applicants->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt_applicants->close();
 $conn->close();
 
-// --- RESTORED EXCEL EXPORT LOGIC ---
-if (isset($_GET['export']) && $_GET['export'] == 'excel') {
+// --- [RESTORED & TRIGGERED] EXCEL EXPORT LOGIC ---
+if ($do_export) {
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle(substr($company_name, 0, 31));
@@ -118,57 +236,33 @@ if (isset($_GET['export']) && $_GET['export'] == 'excel') {
         'A1'
     );
 
-    // Style Headers
     $headerStyle = ['font' => ['bold' => true], 'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFDDDDDD']]];
     $sheet->getStyle('A1:K1')->applyFromArray($headerStyle);
     
-        // Write Data row by row to have full control over formatting
-    $row = 2; // Start from row 2
+    $row = 2;
     foreach ($applicants as $applicant) {
         $sheet->setCellValue('A' . $row, $applicant['name']);
-        
-        // --- THIS IS THE FIX ---
-        // Explicitly set the cell value as a STRING
-        $sheet->setCellValueExplicit(
-            'B' . $row, 
-            $applicant['enrollment_no'], 
-            \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
-        );
-        // -----------------------
-
+        $sheet->setCellValueExplicit('B' . $row, $applicant['enrollment_no'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
         $sheet->setCellValue('C' . $row, $applicant['email']);
         $sheet->setCellValue('D' . $row, $applicant['branch']);
-
-        // --- ALSO A GOOD PRACTICE FOR PHONE NUMBERS ---
-        $sheet->setCellValueExplicit(
-            'E' . $row, 
-            $applicant['whatsapp_no'], 
-            \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
-        );
-        // ---------------------------------------------
-
+        $sheet->setCellValueExplicit('E' . $row, $applicant['whatsapp_no'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
         $sheet->setCellValue('F' . $row, $applicant['was_present']);
         $sheet->setCellValue('G' . $row, $applicant['round1_status']);
         $sheet->setCellValue('H' . $row, $applicant['round2_status']);
         $sheet->setCellValue('I' . $row, $applicant['round3_status']);
         $sheet->setCellValue('J' . $row, $applicant['is_selected']);
         
-        // Write CTC as a number for formatting, but check if it's not null
         $ctc_value = !is_null($applicant['CTC']) ? (float)$applicant['CTC'] : null;
         $sheet->setCellValue('K' . $row, $ctc_value);
         
         $row++;
     }
 
-    // Apply number format to the entire CTC column
     $sheet->getStyle('K')->getNumberFormat()->setFormatCode('#,##0.00');
-
-    // Auto-size columns for better readability
     foreach(range('A','K') as $columnID) {
         $sheet->getColumnDimension($columnID)->setAutoSize(true);
     }
     
-    // Set filename and headers for download
     $filename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $company_name) . '_Applicants_Status.xlsx';
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment;filename="' . $filename . '"');
@@ -183,29 +277,55 @@ if (isset($_GET['export']) && $_GET['export'] == 'excel') {
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8"><title>View Applicants</title>
+    <meta charset="UTF-8">
+    <title>View Applicants for <?php echo htmlspecialchars($company_name); ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 </head>
 <body class="bg-light">
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h3>Applicants for <?php echo htmlspecialchars($company_name); ?></h3>
-        <div>
-            <a href="view_job_applicants.php?job_id=<?php echo $job_id; ?>&export=excel" class="btn btn-success">Export All to Excel</a>
-            <a href="manage_jobs.php" class="btn btn-secondary">← Back to Job List</a>
-        </div>
+        <a href="manage_jobs.php" class="btn btn-secondary">← Back to Job List</a>
     </div>
     
     <?php if (isset($_SESSION['message'])): ?>
         <div class="alert alert-<?php echo $_SESSION['message']['type']; ?> alert-dismissible fade show" role="alert">
-            <?php echo $_SESSION['message']['text']; ?>
+            <?php echo $_SESSION['message']['text']; // Using echo for HTML content ?>
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
     <?php unset($_SESSION['message']); endif; ?>
 
+    <!-- [NEW] Import/Export Section -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Bulk Operations</h5>
+        </div>
+        <div class="card-body">
+            <p class="card-text">
+                <strong>Step 1:</strong> Download the applicant list. <br>
+                <strong>Step 2:</strong> Fill/update the status columns (Present, Rounds, Selected, CTC) in the Excel file. <strong>Do not change the Enrollment Number.</strong><br>
+                <strong>Step 3:</strong> Upload the modified file to update all records at once.
+            </p>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <a href="view_job_applicants.php?job_id=<?php echo $job_id; ?>&export=excel" class="btn btn-success">
+                    <i class="bi bi-file-earmark-arrow-down-fill"></i> Step 1: Export to Excel
+                </a>
+                <form action="view_job_applicants.php?job_id=<?php echo $job_id; ?>" method="POST" enctype="multipart/form-data" class="d-flex flex-wrap gap-2 align-items-center">
+                    <div class="mb-0">
+                         <input type="file" name="applicant_sheet" class="form-control" required accept=".xlsx">
+                    </div>
+                    <button type="submit" name="import_excel" value="1" class="btn btn-info">
+                        <i class="bi bi-file-earmark-arrow-up-fill"></i> Step 3: Import & Update
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div class="card shadow-sm">
         <div class="card-body">
-            <h5 class="card-title">Total Applicants: <?php echo count($applicants); ?></h5>
+            <h5 class="card-title">Total Applicants: <?php echo count($applicants); ?> (Manual Updates Below)</h5>
             <div class="table-responsive">
                 <table class="table table-striped table-hover table-bordered">
                     <thead>
@@ -316,21 +436,23 @@ if (isset($_GET['export']) && $_GET['export'] == 'excel') {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// JavaScript for modal pre-fill (No changes needed here)
+// JavaScript for modal pre-fill (No changes needed)
 document.addEventListener('DOMContentLoaded', function () {
     const updateModal = document.getElementById('updateModal');
-    updateModal.addEventListener('show.bs.modal', function (event) {
-        const button = event.relatedTarget;
-        const modalForm = updateModal.querySelector('form');
-        updateModal.querySelector('.modal-title').textContent = 'Update Status for ' + button.getAttribute('data-student-name');
-        modalForm.querySelector('#application_id').value = button.getAttribute('data-application-id');
-        modalForm.querySelector('#was_present').value = button.getAttribute('data-was-present');
-        modalForm.querySelector('#round1_status').value = button.getAttribute('data-round1-status');
-        modalForm.querySelector('#round2_status').value = button.getAttribute('data-round2-status');
-        modalForm.querySelector('#round3_status').value = button.getAttribute('data-round3-status');
-        modalForm.querySelector('#is_selected').value = button.getAttribute('data-is-selected');
-        modalForm.querySelector('#ctc').value = button.getAttribute('data-ctc');
-    });
+    if (updateModal) {
+        updateModal.addEventListener('show.bs.modal', function (event) {
+            const button = event.relatedTarget;
+            const modalForm = updateModal.querySelector('form');
+            updateModal.querySelector('.modal-title').textContent = 'Update Status for ' + button.getAttribute('data-student-name');
+            modalForm.querySelector('#application_id').value = button.getAttribute('data-application-id');
+            modalForm.querySelector('#was_present').value = button.getAttribute('data-was-present');
+            modalForm.querySelector('#round1_status').value = button.getAttribute('data-round1-status');
+            modalForm.querySelector('#round2_status').value = button.getAttribute('data-round2-status');
+            modalForm.querySelector('#round3_status').value = button.getAttribute('data-round3-status');
+            modalForm.querySelector('#is_selected').value = button.getAttribute('data-is-selected');
+            modalForm.querySelector('#ctc').value = button.getAttribute('data-ctc');
+        });
+    }
 });
 </script>
 
